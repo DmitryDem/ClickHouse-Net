@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Globalization;
+using System.Threading.Tasks;
 
 namespace ClickHouse.Ado.Impl.Settings {
     internal class FloatSettingValue : SettingValue {
@@ -7,7 +8,8 @@ namespace ClickHouse.Ado.Impl.Settings {
 
         public float Value { get; set; }
 
-        protected internal override void Write(ProtocolFormatter formatter) => formatter.WriteString(Value.ToString(CultureInfo.InvariantCulture));
+        protected internal override void Write(ProtocolFormatter formatter) => WriteAsync(formatter).Wait();
+        protected internal override async Task WriteAsync(ProtocolFormatter formatter) => await formatter.WriteStringAsync(Value.ToString(CultureInfo.InvariantCulture)).ConfigureAwait(false);
 
         internal override T As<T>() {
             if (typeof(T) != typeof(float)) throw new InvalidCastException();

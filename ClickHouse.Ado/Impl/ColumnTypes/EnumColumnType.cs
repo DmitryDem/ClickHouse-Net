@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 #if !NETCOREAPP11
@@ -23,28 +24,45 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
         public override int Rows => Data?.Length ?? 0;
         internal override Type CLRType => typeof(int);
 
-        internal override void Read(ProtocolFormatter formatter, int rows) {
-            if (BaseSize == 8) {
+        internal override void Read(ProtocolFormatter formatter, int rows)
+        {
+            ReadAsync(formatter, rows).Wait();
+        }
+
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
+            if (BaseSize == 8)
+            {
                 var vals = new SimpleColumnType<byte>();
-                vals.Read(formatter, rows);
-                Data = vals.Data.Select(x => (int) x).ToArray();
-            } else if (BaseSize == 16) {
+                await vals.ReadAsync(formatter, rows).ConfigureAwait(false);
+                Data = vals.Data.Select(x => (int)x).ToArray();
+            }
+            else if (BaseSize == 16)
+            {
                 var vals = new SimpleColumnType<short>();
-                vals.Read(formatter, rows);
-                Data = vals.Data.Select(x => (int) x).ToArray();
-            } else {
+                await vals.ReadAsync(formatter, rows).ConfigureAwait(false);
+                Data = vals.Data.Select(x => (int)x).ToArray();
+            }
+            else
+            {
                 throw new NotSupportedException($"Enums with base size {BaseSize} are not supported.");
             }
         }
 
         public override string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent) => $"Enum{BaseSize}({string.Join(",", Values.Select(x => $"{x.Item1}={x.Item2}"))})";
 
-        public override void Write(ProtocolFormatter formatter, int rows) {
+        public override void Write(ProtocolFormatter formatter, int rows)
+        {
+            WriteAsync(formatter, rows).Wait();
+        }
+
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
             Debug.Assert(Rows == rows, "Row count mismatch!");
             if (BaseSize == 8)
-                new SimpleColumnType<byte>(Data.Select(x => (byte) x).ToArray()).Write(formatter, rows);
+                await new SimpleColumnType<byte>(Data.Select(x => (byte)x).ToArray()).WriteAsync(formatter, rows).ConfigureAwait(false);
             else if (BaseSize == 16)
-                new SimpleColumnType<short>(Data.Select(x => (short) x).ToArray()).Write(formatter, rows);
+                await new SimpleColumnType<short>(Data.Select(x => (short)x).ToArray()).WriteAsync(formatter, rows).ConfigureAwait(false);
             else
                 throw new NotSupportedException($"Enums with base size {BaseSize} are not supported.");
         }

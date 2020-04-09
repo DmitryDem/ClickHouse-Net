@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.Data;
 using LZ4;
 
@@ -13,21 +14,36 @@ namespace ClickHouse.Ado.Impl.Compress {
 
         public override CompressionMethod Method => _useHc ? CompressionMethod.Lz4Hc : CompressionMethod.Lz4;
 
-        protected override byte[] Compress(MemoryStream uncompressed) {
+        protected override byte[] Compress(MemoryStream uncompressed)
+        {
+            return CompressAsync(uncompressed).Result;
+        }
+
+        protected override async Task<byte[]> CompressAsync(MemoryStream uncompressed)
+        {
             var output = new MemoryStream();
-            output.Write(Header, 0, Header.Length);
-            var compressed = _useHc ? LZ4Codec.EncodeHC(uncompressed.ToArray(), 0, (int) uncompressed.Length) : LZ4Codec.Encode(uncompressed.ToArray(), 0, (int) uncompressed.Length);
-            output.Write(BitConverter.GetBytes(compressed.Length + 9), 0, 4);
-            output.Write(BitConverter.GetBytes(uncompressed.Length), 0, 4);
-            output.Write(compressed, 0, compressed.Length);
+            await output.WriteAsync(Header, 0, Header.Length).ConfigureAwait(false);
+            var compressed = _useHc ? LZ4Codec.EncodeHC(uncompressed.ToArray(), 0, (int)uncompressed.Length) : LZ4Codec.Encode(uncompressed.ToArray(), 0, (int)uncompressed.Length);
+            await output.WriteAsync(BitConverter.GetBytes(compressed.Length + 9), 0, 4).ConfigureAwait(false);
+            await output.WriteAsync(BitConverter.GetBytes(uncompressed.Length), 0, 4).ConfigureAwait(false);
+            await output.WriteAsync(compressed, 0, compressed.Length).ConfigureAwait(false);
             return output.ToArray();
         }
 
-        protected override byte[] Decompress(Stream compressed, out UInt128 compressedHash) {
+        protected override byte[] Decompress(Stream compressed, out UInt128 compressedHash)
+        {
+            var result = DecompressAsync(compressed).Result;
+            compressedHash = result.Item2;
+            return result.Item1;
+        }
+
+        protected override async Task<Tuple<byte[], UInt128>> DecompressAsync(Stream compressed)
+        {
             var header = new byte[9];
             var read = 0;
-            do {
-                read += compressed.Read(header, read, header.Length - read);
+            do
+            {
+                read += await compressed.ReadAsync(header, read, header.Length - read).ConfigureAwait(false);
             } while (read < header.Length);
 
             if (header[0] != Header[0])
@@ -39,12 +55,14 @@ namespace ClickHouse.Ado.Impl.Compress {
             compressedSize -= header.Length;
             var compressedBytes = new byte[compressedSize + header.Length];
             Array.Copy(header, 0, compressedBytes, 0, header.Length);
-            do {
-                read += compressed.Read(compressedBytes, header.Length + read, compressedSize - read);
+            do
+            {
+                read += await compressed.ReadAsync(compressedBytes, header.Length + read, compressedSize - read).ConfigureAwait(false);
             } while (read < compressedSize);
 
-            compressedHash = ClickHouseCityHash.CityHash128(compressedBytes);
-            return LZ4Codec.Decode(compressedBytes, header.Length, compressedSize, uncompressedSize);
+            var compressedHash = ClickHouseCityHash.CityHash128(compressedBytes);
+            var decompressedBytes = LZ4Codec.Decode(compressedBytes, header.Length, compressedSize, uncompressedSize);
+            return new Tuple<byte[], UInt128>(decompressedBytes, compressedHash);
         }
     }
 }

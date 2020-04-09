@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 
 namespace ClickHouse.Ado.Impl.Settings {
     internal class StringSettingValue : SettingValue {
@@ -6,7 +7,9 @@ namespace ClickHouse.Ado.Impl.Settings {
 
         public string Value { get; set; }
 
-        protected internal override void Write(ProtocolFormatter formatter) => formatter.WriteString(Value);
+        protected internal override void Write(ProtocolFormatter formatter) => WriteAsync(formatter).Wait();
+
+        protected internal override async Task WriteAsync(ProtocolFormatter formatter) => await formatter.WriteStringAsync(Value).ConfigureAwait(false);
 
         internal override T As<T>() {
             if (typeof(T) != typeof(string)) throw new InvalidCastException();

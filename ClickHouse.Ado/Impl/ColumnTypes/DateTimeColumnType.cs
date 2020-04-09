@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 using Buffer = System.Buffer;
@@ -22,13 +23,19 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
 
         public override int Rows => Data?.Length ?? 0;
 
-        internal override void Read(ProtocolFormatter formatter, int rows) {
+        internal override void Read(ProtocolFormatter formatter, int rows)
+        {
+            ReadAsync(formatter, rows).Wait();
+        }
+
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
 #if FRAMEWORK20 || FRAMEWORK40 || FRAMEWORK45
             var itemSize = sizeof(uint);
 #else
             var itemSize = Marshal.SizeOf<uint>();
 #endif
-            var bytes = formatter.ReadBytes(itemSize * rows);
+            var bytes = await formatter.ReadBytesAsync(itemSize * rows).ConfigureAwait(false);
             var xdata = new uint[rows];
             Buffer.BlockCopy(bytes, 0, xdata, 0, itemSize * rows);
             Data = xdata.Select(x => UnixTimeBase.AddSeconds(x)).ToArray();
@@ -38,6 +45,13 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
             Debug.Assert(Rows == rows, "Row count mismatch!");
             foreach (var d in Data)
                 formatter.WriteBytes(BitConverter.GetBytes((uint) (d - UnixTimeBase).TotalSeconds));
+        }
+
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
+            Debug.Assert(Rows == rows, "Row count mismatch!");
+            foreach (var d in Data)
+                await formatter.WriteBytesAsync(BitConverter.GetBytes((uint)(d - UnixTimeBase).TotalSeconds)).ConfigureAwait(false);
         }
 
         public override string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent) => "DateTime";

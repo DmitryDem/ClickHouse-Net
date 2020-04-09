@@ -1,8 +1,12 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
-namespace ClickHouse.Ado.Impl.Data {
-    internal class Block {
+namespace ClickHouse.Ado.Impl.Data
+{
+    internal class Block
+    {
         public string Name { get; set; } = "";
         public BlockInfo BlockInfo { get; set; } = new BlockInfo();
 
@@ -10,32 +14,51 @@ namespace ClickHouse.Ado.Impl.Data {
 
         public List<ColumnInfo> Columns { get; } = new List<ColumnInfo>();
 
-        internal void Write(ProtocolFormatter formatter) {
-            formatter.WriteUInt((int) ClientMessageType.Data);
-            if (formatter.ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTemporaryTables)
-                formatter.WriteString(Name);
-            using (formatter.Compression) {
-                if (formatter.ClientInfo.ClientRevision >= ProtocolCaps.DbmsMinRevisionWithBlockInfo) BlockInfo.Write(formatter);
-
-                formatter.WriteUInt(Columns.Count);
-                formatter.WriteUInt(Rows);
-
-                foreach (var column in Columns) column.Write(formatter, Rows);
-            }
+        internal void Write(ProtocolFormatter formatter)
+        {
+            WriteAsync(formatter).Wait();
         }
 
-        public static Block Read(ProtocolFormatter formatter) {
+        internal async Task WriteAsync(ProtocolFormatter formatter)
+        {
+            await formatter.WriteUIntAsync((int)ClientMessageType.Data).ConfigureAwait(false);
+            if (formatter.ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTemporaryTables)
+                await formatter.WriteStringAsync(Name).ConfigureAwait(false);
+
+            await formatter.Compression.Run(async () =>
+            {
+                if (formatter.ClientInfo.ClientRevision >= ProtocolCaps.DbmsMinRevisionWithBlockInfo)
+                {
+                    await BlockInfo.WriteAsync(formatter).ConfigureAwait(false);
+                }
+
+                await formatter.WriteUIntAsync(Columns.Count).ConfigureAwait(false);
+                await formatter.WriteUIntAsync(Rows).ConfigureAwait(false);
+
+                foreach (var column in Columns) await column.WriteAsync(formatter, Rows).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        }
+
+        public static Block Read(ProtocolFormatter formatter)
+        {
+            return ReadAsync(formatter).Result;
+        }
+
+        public static async Task<Block> ReadAsync(ProtocolFormatter formatter)
+        {
             var rv = new Block();
             if (formatter.ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTemporaryTables)
-                formatter.ReadString();
-            using (formatter.Decompression) {
-                if (formatter.ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithBlockInfo)
-                    rv.BlockInfo = BlockInfo.Read(formatter);
+                await formatter.ReadStringAsync().ConfigureAwait(false);
 
-                var cols = formatter.ReadUInt();
-                var rows = formatter.ReadUInt();
-                for (var i = 0; i < cols; i++) rv.Columns.Add(ColumnInfo.Read(formatter, (int) rows));
-            }
+            await formatter.Decompression.Run(async () =>
+            {
+                if (formatter.ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithBlockInfo)
+                    rv.BlockInfo = await BlockInfo.ReadAsync(formatter).ConfigureAwait(false);
+
+                var cols = await formatter.ReadUIntAsync().ConfigureAwait(false);
+                var rows = await formatter.ReadUIntAsync().ConfigureAwait(false);
+                for (var i = 0; i < cols; i++) rv.Columns.Add(await ColumnInfo.ReadAsync(formatter, (int)rows).ConfigureAwait(false));
+            }).ConfigureAwait(false);
 
             return rv;
         }

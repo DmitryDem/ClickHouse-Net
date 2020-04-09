@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Net;
+using System.Threading.Tasks;
 
 namespace ClickHouse.Ado.Impl.Data {
     internal class ClientInfo {
@@ -32,32 +33,39 @@ namespace ClickHouse.Ado.Impl.Data {
         public string HttpUserAgent { get; set; }
         public string QuotaKey { get; set; }
 
-        internal void Write(ProtocolFormatter formatter) {
-            formatter.WriteByte((byte) QueryKind);
+        internal void Write(ProtocolFormatter formatter)
+        {
+            WriteAsync(formatter).Wait();
+        }
+
+        internal async Task WriteAsync(ProtocolFormatter formatter)
+        {
+            await formatter.WriteByteAsync((byte)QueryKind).ConfigureAwait(false);
             if (QueryKind == QueryKind.None) return;
-            formatter.WriteString(InitialUser);
-            formatter.WriteString(InitialQueryId);
-            formatter.WriteString(InitialAddress?.ToString());
-            formatter.WriteByte((byte) Interface);
-            switch (Interface) {
+            await formatter.WriteStringAsync(InitialUser).ConfigureAwait(false);
+            await formatter.WriteStringAsync(InitialQueryId).ConfigureAwait(false);
+            await formatter.WriteStringAsync(InitialAddress?.ToString()).ConfigureAwait(false);
+            await formatter.WriteByteAsync((byte)Interface).ConfigureAwait(false);
+            switch (Interface)
+            {
                 case Interface.Tcp:
-                    formatter.WriteString(OsUser);
-                    formatter.WriteString(ClientHostname);
-                    formatter.WriteString(ClientName);
-                    formatter.WriteUInt(ClientVersionMajor);
-                    formatter.WriteUInt(ClientVersionMinor);
-                    formatter.WriteUInt(ClientRevision);
+                    await formatter.WriteStringAsync(OsUser).ConfigureAwait(false);
+                    await formatter.WriteStringAsync(ClientHostname).ConfigureAwait(false);
+                    await formatter.WriteStringAsync(ClientName).ConfigureAwait(false);
+                    await formatter.WriteUIntAsync(ClientVersionMajor).ConfigureAwait(false);
+                    await formatter.WriteUIntAsync(ClientVersionMinor).ConfigureAwait(false);
+                    await formatter.WriteUIntAsync(ClientRevision).ConfigureAwait(false);
                     break;
                 case Interface.Http:
-                    formatter.WriteByte((byte) HttpMethod);
-                    formatter.WriteString(HttpUserAgent);
+                    await formatter.WriteByteAsync((byte)HttpMethod).ConfigureAwait(false);
+                    await formatter.WriteStringAsync(HttpUserAgent).ConfigureAwait(false);
                     break;
             }
 
             if (formatter.ServerInfo.Build > ProtocolCaps.DbmsMinRevisionWithQuotaKeyInClientInfo)
-                formatter.WriteString(QuotaKey);
+                await formatter.WriteStringAsync(QuotaKey).ConfigureAwait(false);
             if (formatter.ServerInfo.Build > ProtocolCaps.DbmsMinRevisionWithServerVersionPatch)
-                formatter.WriteUInt(ClientRevision);
+                await formatter.WriteUIntAsync(ClientRevision).ConfigureAwait(false);
         }
 
         public void PopulateEnvironment() {

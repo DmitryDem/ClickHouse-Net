@@ -3,6 +3,7 @@ using System.Collections;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 
@@ -16,25 +17,41 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
         public override int Rows => Data?.Length ?? 0;
         internal override Type CLRType => typeof(string);
 
-        internal override void Read(ProtocolFormatter formatter, int rows) {
+        internal override void Read(ProtocolFormatter formatter, int rows)
+        {
+            ReadAsync(formatter, rows).Wait();
+        }
+
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
             Data = new string[rows];
-            var bytes = formatter.ReadBytes((int) (rows * Length));
+            var bytes = await formatter.ReadBytesAsync((int)(rows * Length));
             for (var i = 0; i < rows; i++)
-                Data[i] = Encoding.UTF8.GetString(bytes, (int) (i * Length), (int) Length);
+                Data[i] = Encoding.UTF8.GetString(bytes, (int)(i * Length), (int)Length);
         }
 
         public override string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent) => $"FixedString({Length})";
 
-        public override void Write(ProtocolFormatter formatter, int rows) {
+        public override void Write(ProtocolFormatter formatter, int rows)
+        {
+            WriteAsync(formatter, rows).Wait();
+        }
+
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
             Debug.Assert(Rows == rows, "Row count mismatch!");
-            foreach (var d in Data) {
+            foreach (var d in Data)
+            {
                 var bytes = Encoding.UTF8.GetBytes(d ?? string.Empty);
                 var left = Length - bytes.Length;
-                if (left <= 0) {
-                    formatter.WriteBytes(bytes.Take((int) Length).ToArray());
-                } else {
-                    formatter.WriteBytes(bytes);
-                    formatter.WriteBytes(new byte[left]);
+                if (left <= 0)
+                {
+                    await formatter.WriteBytesAsync(bytes.Take((int)Length).ToArray()).ConfigureAwait(false);
+                }
+                else
+                {
+                    await formatter.WriteBytesAsync(bytes).ConfigureAwait(false);
+                    await formatter.WriteBytesAsync(new byte[left]).ConfigureAwait(false);
                 }
             }
         }

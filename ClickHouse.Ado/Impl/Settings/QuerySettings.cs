@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.Data;
 
 namespace ClickHouse.Ado.Impl.Settings {
@@ -291,13 +292,20 @@ namespace ClickHouse.Ado.Impl.Settings {
 
         public object Get(string name, bool useDefaults = true) => Get(name, useDefaults, out _);
 
-        internal void Write(ProtocolFormatter formatter) {
-            foreach (var settingValue in _settings) {
-                formatter.WriteString(settingValue.Key);
-                settingValue.Value.Write(formatter);
+        internal void Write(ProtocolFormatter formatter)
+        {
+            WriteAsync(formatter).Wait();
+        }
+
+        internal async Task WriteAsync(ProtocolFormatter formatter)
+        {
+            foreach (var settingValue in _settings)
+            {
+                await formatter.WriteStringAsync(settingValue.Key).ConfigureAwait(false);
+                await settingValue.Value.WriteAsync(formatter).ConfigureAwait(false);
             }
 
-            formatter.WriteString("");
+            await formatter.WriteStringAsync("").ConfigureAwait(false);
         }
     }
 }

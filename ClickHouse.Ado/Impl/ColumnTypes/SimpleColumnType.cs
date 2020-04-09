@@ -5,6 +5,7 @@ using System.Collections;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 using Buffer = System.Buffer;
@@ -23,13 +24,19 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
         public override int Rows => Data?.Length ?? 0;
         internal override Type CLRType => typeof(T);
 
-        internal override void Read(ProtocolFormatter formatter, int rows) {
+        internal override void Read(ProtocolFormatter formatter, int rows)
+        {
+            ReadAsync(formatter, rows).Wait();
+        }
+
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
 #if FRAMEWORK20 || FRAMEWORK40 || FRAMEWORK45
             var itemSize = Marshal.SizeOf(typeof(T));
 #else
             var itemSize = Marshal.SizeOf<T>();
 #endif
-            var bytes = formatter.ReadBytes(itemSize * rows);
+            var bytes = await formatter.ReadBytesAsync(itemSize * rows).ConfigureAwait(false);
             Data = new T[rows];
             Buffer.BlockCopy(bytes, 0, Data, 0, itemSize * rows);
         }
@@ -47,7 +54,13 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
             return typeof(T).Name;
         }
 
-        public override void Write(ProtocolFormatter formatter, int rows) {
+        public override void Write(ProtocolFormatter formatter, int rows)
+        {
+            WriteAsync(formatter, rows).Wait();
+        }
+
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
             Debug.Assert(Rows == rows, "Row count mismatch!");
 #if FRAMEWORK20 || FRAMEWORK40 || FRAMEWORK45
             var itemSize = Marshal.SizeOf(typeof(T));
@@ -56,7 +69,7 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
 #endif
             var bytes = new byte[itemSize * rows];
             Buffer.BlockCopy(Data, 0, bytes, 0, itemSize * rows);
-            formatter.WriteBytes(bytes);
+            await formatter.WriteBytesAsync(bytes).ConfigureAwait(false);
         }
 
         public override void ValueFromConst(Parser.ValueType val) {

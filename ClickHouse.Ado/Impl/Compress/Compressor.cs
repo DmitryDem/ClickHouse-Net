@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.Data;
 
 namespace ClickHouse.Ado.Impl.Compress {
@@ -7,8 +8,11 @@ namespace ClickHouse.Ado.Impl.Compress {
         public abstract CompressionMethod Method { get; }
         public abstract Stream BeginCompression(Stream baseStream);
         public abstract void EndCompression();
+        public abstract Task EndCompressionAsync();
         public abstract Stream BeginDecompression(Stream baseStream);
+        public abstract Task<Stream> BeginDecompressionAsync(Stream baseStream);
         public abstract void EndDecompression();
+        public abstract Task EndDecompressionAsync();
 
         public static Compressor Create(ClickHouseConnectionSettings settings) {
             switch ((settings.Compressor ?? "").ToLower()) {

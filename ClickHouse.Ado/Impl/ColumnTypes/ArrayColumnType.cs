@@ -3,14 +3,18 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 
-namespace ClickHouse.Ado.Impl.ColumnTypes {
-    internal class ArrayColumnType : ColumnType {
+namespace ClickHouse.Ado.Impl.ColumnTypes
+{
+    internal class ArrayColumnType : ColumnType
+    {
         private int _outerRows;
 
-        public ArrayColumnType(ColumnType innerType) {
+        public ArrayColumnType(ColumnType innerType)
+        {
             Offsets = new SimpleColumnType<ulong>();
             InnerType = innerType;
         }
@@ -22,63 +26,85 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
 
         internal override Type CLRType => InnerType.CLRType.MakeArrayType();
 
-        internal override void Read(ProtocolFormatter formatter, int rows) {
-            Offsets.Read(formatter, rows);
-            _outerRows = rows;
-            var totalRows = Offsets.Data.Last();
-            InnerType.Read(formatter, (int) totalRows);
+        internal override void Read(ProtocolFormatter formatter, int rows)
+        {
+            ReadAsync(formatter, rows).Wait();
         }
 
-        public override void ValueFromConst(Parser.ValueType val) {
-            if (val.TypeHint == Parser.ConstType.Array) {
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
+            await Offsets.ReadAsync(formatter, rows).ConfigureAwait(false);
+            _outerRows = rows;
+            var totalRows = Offsets.Data.Last();
+            await InnerType.ReadAsync(formatter, (int)totalRows).ConfigureAwait(false);
+        }
+
+        public override void ValueFromConst(Parser.ValueType val)
+        {
+            if (val.TypeHint == Parser.ConstType.Array)
+            {
                 InnerType.ValuesFromConst(val.ArrayValue.Select(x => Convert.ChangeType(x.StringValue, InnerType.CLRType)));
                 Offsets.ValueFromConst(
-                    new Parser.ValueType {
+                    new Parser.ValueType
+                    {
                         TypeHint = Parser.ConstType.Number,
                         StringValue = InnerType.Rows.ToString()
                     }
                 );
-            } else {
+            }
+            else
+            {
                 throw new NotSupportedException();
             }
         }
 
         public override string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent) => $"Array({InnerType.AsClickHouseType(usageIntent)})";
 
-        public override void Write(ProtocolFormatter formatter, int rows) {
-            Offsets.Write(formatter, rows);
-            var totalRows = rows == 0 ? 0 : Offsets.Data.Last();
-            InnerType.Write(formatter, (int) totalRows);
+        public override void Write(ProtocolFormatter formatter, int rows)
+        {
+            WriteAsync(formatter, rows).Wait();
         }
 
-        public override void ValueFromParam(ClickHouseParameter parameter) {
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
+            await Offsets.WriteAsync(formatter, rows).ConfigureAwait(false);
+            var totalRows = rows == 0 ? 0 : Offsets.Data.Last();
+            await InnerType.WriteAsync(formatter, (int)totalRows).ConfigureAwait(false);
+        }
+
+        public override void ValueFromParam(ClickHouseParameter parameter)
+        {
             if (parameter.DbType == 0
 #if !NETCOREAPP11
                 || parameter.DbType == DbType.Object
 #endif
             )
-                ValuesFromConst(new[] {parameter.Value as IEnumerable});
+                ValuesFromConst(new[] { parameter.Value as IEnumerable });
             else throw new NotSupportedException();
         }
 
-        public override object Value(int currentRow) {
+        public override object Value(int currentRow)
+        {
             var start = currentRow == 0 ? 0 : Offsets.Data[currentRow - 1];
             var end = Offsets.Data[currentRow];
             var rv = new object[end - start];
             for (var i = start; i < end; i++)
-                rv[i - start] = InnerType.Value((int) i);
+                rv[i - start] = InnerType.Value((int)i);
             return rv;
         }
 
         public override long IntValue(int currentRow) => throw new InvalidCastException();
 
-        public override void ValuesFromConst(IEnumerable objects) {
+        public override void ValuesFromConst(IEnumerable objects)
+        {
             var offsets = new List<ulong>();
             var itemsPlain = new List<object>();
             ulong currentOffset = 0;
-            foreach (var item in objects) {
+            foreach (var item in objects)
+            {
                 ulong itemCount = 0;
-                foreach (var itemPart in (IEnumerable) item) {
+                foreach (var itemPart in (IEnumerable)item)
+                {
                     itemCount++;
                     itemsPlain.Add(itemPart);
                 }

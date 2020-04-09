@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 
@@ -15,16 +16,28 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
         public override int Rows => Columns.First().Rows;
         internal override Type CLRType => typeof(Tuple<>).MakeGenericType(Columns.Select(x => x.CLRType).ToArray());
 
-        internal override void Read(ProtocolFormatter formatter, int rows) {
+        internal override void Read(ProtocolFormatter formatter, int rows)
+        {
+            ReadAsync(formatter, rows).Wait();
+        }
+
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
             foreach (var column in Columns)
-                column.Read(formatter, rows);
+                await column.ReadAsync(formatter, rows).ConfigureAwait(false);
         }
 
         public override string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent) => $"Tuple({string.Join(",", Columns.Select(x => x.AsClickHouseType(usageIntent)))})";
 
-        public override void Write(ProtocolFormatter formatter, int rows) {
+        public override void Write(ProtocolFormatter formatter, int rows)
+        {
+            WriteAsync(formatter, rows).Wait();
+        }
+
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
             Debug.Assert(Rows == rows, "Row count mismatch!");
-            foreach (var column in Columns) column.Write(formatter, rows);
+            foreach (var column in Columns) await column.WriteAsync(formatter, rows).ConfigureAwait(false);
         }
 
         public override void ValueFromConst(Parser.ValueType val) => throw new NotSupportedException();

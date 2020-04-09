@@ -1,4 +1,6 @@
 ﻿using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace ClickHouse.Ado.Impl {
     internal class UnclosableStream : Stream {
@@ -20,6 +22,13 @@ namespace ClickHouse.Ado.Impl {
             var rv = BaseStream.Read(buffer, offset, count);
             return rv;
         }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            return BaseStream.ReadAsync(buffer, offset, count, cancellationToken);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => BaseStream.WriteAsync(buffer, offset, count, cancellationToken);
 
         public override void Write(byte[] buffer, int offset, int count) => BaseStream.Write(buffer, offset, count);
 

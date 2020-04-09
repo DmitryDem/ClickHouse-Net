@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 #if !NETCOREAPP11
@@ -20,10 +21,16 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
 
         public override string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent) => $"Nullable({InnerType.AsClickHouseType(usageIntent)})";
 
-        public override void Write(ProtocolFormatter formatter, int rows) {
+        public override void Write(ProtocolFormatter formatter, int rows)
+        {
+            WriteAsync(formatter, rows).Wait();
+        }
+
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
             Debug.Assert(Rows == rows, "Row count mismatch!");
-            new SimpleColumnType<byte>(Nulls.Select(x => x ? (byte) 1 : (byte) 0).ToArray()).Write(formatter, rows);
-            InnerType.Write(formatter, rows);
+            await new SimpleColumnType<byte>(Nulls.Select(x => x ? (byte)1 : (byte)0).ToArray()).WriteAsync(formatter, rows).ConfigureAwait(false);
+            await InnerType.WriteAsync(formatter, rows).ConfigureAwait(false);
         }
 
         internal override void Read(ProtocolFormatter formatter, int rows) {
@@ -31,6 +38,14 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
             nullStatuses.Read(formatter, rows);
             Nulls = nullStatuses.Data.Select(x => x != 0).ToArray();
             InnerType.Read(formatter, rows);
+        }
+
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
+            var nullStatuses = new SimpleColumnType<byte>();
+            await nullStatuses.ReadAsync(formatter, rows).ConfigureAwait(false);
+            Nulls = nullStatuses.Data.Select(x => x != 0).ToArray();
+            await InnerType.ReadAsync(formatter, rows).ConfigureAwait(false);
         }
 
         public override void ValueFromConst(Parser.ValueType val) {

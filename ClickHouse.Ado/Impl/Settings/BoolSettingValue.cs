@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 
 namespace ClickHouse.Ado.Impl.Settings {
     internal class BoolSettingValue : SettingValue {
@@ -6,7 +7,9 @@ namespace ClickHouse.Ado.Impl.Settings {
 
         public bool Value { get; set; }
 
-        protected internal override void Write(ProtocolFormatter formatter) => formatter.WriteUInt(Value ? 1L : 0L);
+        protected internal override void Write(ProtocolFormatter formatter) => WriteAsync(formatter).Wait();
+
+        protected internal override async Task WriteAsync(ProtocolFormatter formatter) => await formatter.WriteUIntAsync(Value ? 1L : 0L).ConfigureAwait(false);
 
         internal override T As<T>() {
             if (typeof(T) != typeof(bool)) throw new InvalidCastException();

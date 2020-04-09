@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 
 namespace ClickHouse.Ado.Impl.Settings {
     internal class TimeSpanMsSettingValue : TimeSpanSettingValue {
@@ -6,6 +7,8 @@ namespace ClickHouse.Ado.Impl.Settings {
 
         public TimeSpanMsSettingValue(TimeSpan value) : base(value) { }
 
-        protected internal override void Write(ProtocolFormatter formatter) => formatter.WriteUInt((long) Value.TotalMilliseconds);
+        protected internal override void Write(ProtocolFormatter formatter) => WriteAsync(formatter).Wait();
+
+        protected internal override Task WriteAsync(ProtocolFormatter formatter) => formatter.WriteUIntAsync((long)Value.TotalMilliseconds);
     }
 }

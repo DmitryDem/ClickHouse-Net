@@ -4,12 +4,15 @@ using System.Data;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 
-namespace ClickHouse.Ado.Impl.ColumnTypes {
+namespace ClickHouse.Ado.Impl.ColumnTypes
+{
     /// <summary> UUID column type </summary>
-    internal class GuidColumnType : ColumnType {
+    internal class GuidColumnType : ColumnType
+    {
         internal const string UuidColumnTypeName = "UUID";
 
         private static readonly int[] swapTable = {
@@ -41,12 +44,19 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
 
         internal override Type CLRType => typeof(Guid);
 
-        internal override void Read(ProtocolFormatter formatter, int rows) {
+        internal override void Read(ProtocolFormatter formatter, int rows)
+        {
+            ReadAsync(formatter, rows).Wait();
+        }
+
+        internal override async Task ReadAsync(ProtocolFormatter formatter, int rows)
+        {
             var itemSize = Marshal.SizeOf(typeof(Guid));
             var xdata = new Guid[rows];
             var guidSwappedBytes = new byte[itemSize];
-            for (var i = 0; i < rows; i++) {
-                var guidBytes = formatter.ReadBytes(itemSize);
+            for (var i = 0; i < rows; i++)
+            {
+                var guidBytes = await formatter.ReadBytesAsync(itemSize).ConfigureAwait(false);
                 for (var b = 0; b < itemSize; b++)
                     guidSwappedBytes[b] = guidBytes[swapTable[b]];
                 xdata[i] = new Guid(guidSwappedBytes);
@@ -55,12 +65,14 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
             Data = xdata;
         }
 
-        public override void ValueFromConst(Parser.ValueType val) {
-            switch (val.TypeHint) {
+        public override void ValueFromConst(Parser.ValueType val)
+        {
+            switch (val.TypeHint)
+            {
                 case Parser.ConstType.String:
                     var match = Regex.Match(val.StringValue, @"'(?<value>[0-9A-F]{8}([-][0-9A-F]{4}){3}[-][0-9A-F]{12})'", RegexOptions.IgnoreCase);
                     if (match.Success)
-                        Data = new[] {new Guid(match.Groups["value"].Value)};
+                        Data = new[] { new Guid(match.Groups["value"].Value) };
                     break;
                 default:
                     throw new InvalidCastException("Cannot convert numeric value to Guid.");
@@ -69,21 +81,30 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
 
         public override string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent) => UuidColumnTypeName;
 
-        public override void Write(ProtocolFormatter formatter, int rows) {
-            foreach (var d in Data) {
+        public override void Write(ProtocolFormatter formatter, int rows)
+        {
+            WriteAsync(formatter, rows).Wait();
+        }
+
+        public override async Task WriteAsync(ProtocolFormatter formatter, int rows)
+        {
+            foreach (var d in Data)
+            {
                 var guidBytes = d.ToByteArray();
-                formatter.WriteBytes(guidBytes, 6, 2);
-                formatter.WriteBytes(guidBytes, 4, 2);
-                formatter.WriteBytes(guidBytes, 0, 4);
+                await formatter.WriteBytesAsync(guidBytes, 6, 2);
+                await formatter.WriteBytesAsync(guidBytes, 4, 2);
+                await formatter.WriteBytesAsync(guidBytes, 0, 4);
                 for (var b = 15; b >= 8; b--)
-                    formatter.WriteByte(guidBytes[b]);
+                    await formatter.WriteByteAsync(guidBytes[b]).ConfigureAwait(false);
             }
         }
 
-        public override void ValueFromParam(ClickHouseParameter parameter) {
-            switch (parameter.DbType) {
+        public override void ValueFromParam(ClickHouseParameter parameter)
+        {
+            switch (parameter.DbType)
+            {
                 case DbType.Guid:
-                    Data = new[] {(Guid) Convert.ChangeType(parameter.Value, typeof(Guid))};
+                    Data = new[] { (Guid)Convert.ChangeType(parameter.Value, typeof(Guid)) };
                     break;
                 default:
                     throw new InvalidCastException($"Cannot convert parameter with type {parameter.DbType} to Guid.");

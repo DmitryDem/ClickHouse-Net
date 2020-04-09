@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ColumnTypes;
 using ClickHouse.Ado.Impl.Data;
 #if !NETCOREAPP11
@@ -25,14 +26,16 @@ namespace ClickHouse.Ado {
 #if !NETCOREAPP11
                                       ,
                                       CommandBehavior behavior
-#endif
+#endif                                
+                                      
         ) {
             _clickHouseConnection = clickHouseConnection;
 #if !NETCOREAPP11
             _behavior = behavior;
 #endif
-            NextResult();
         }
+
+        internal static ClickHouseDataReaderFactory Factory { get; } = new ClickHouseDataReaderFactory();
 
         public void Dispose() => Close();
 
@@ -121,22 +124,35 @@ namespace ClickHouse.Ado {
 
         public int FieldCount => _currentBlock.Columns.Count;
 
-        public void Close() {
+        public void Close()
+        {
+            CloseAsync().Wait();
+        }
+
+        public async Task CloseAsync()
+        {
             if (_currentBlock != null)
-                _clickHouseConnection.Formatter.ReadResponse();
+                await _clickHouseConnection.Formatter.ReadResponseAsync().ConfigureAwait(false);
 #if !NETCOREAPP11
             if ((_behavior & CommandBehavior.CloseConnection) != 0)
                 _clickHouseConnection.Close();
 #endif
             _clickHouseConnection = null;
         }
+
 #if !NETCOREAPP11
         public DataTable GetSchemaTable() => throw new NotSupportedException();
 #endif
 
-        public bool NextResult() {
+        public bool NextResult()
+        {
+            return NextResultAsync().Result;
+        }
+
+        public async Task<bool> NextResultAsync()
+        {
             _currentRow = -1;
-            return (_currentBlock = _clickHouseConnection.Formatter.ReadBlock()) != null;
+            return (_currentBlock = await _clickHouseConnection.Formatter.ReadBlockAsync().ConfigureAwait(false)) != null;
         }
 
         public bool Read() {

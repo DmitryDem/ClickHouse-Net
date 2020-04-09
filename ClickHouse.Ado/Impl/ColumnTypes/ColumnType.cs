@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.ATG.Insert;
 using ClickHouse.Ado.Impl.Data;
 using Scanner = ClickHouse.Ado.Impl.ATG.IdentList.Scanner;
@@ -74,6 +75,7 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
 
         internal abstract Type CLRType { get; }
         internal abstract void Read(ProtocolFormatter formatter, int rows);
+        internal abstract Task ReadAsync(ProtocolFormatter formatter, int rows);
 
         public static ColumnType Create(string name) {
             if (CaseInsensitiveTypeAliases.TryGetValue(name, out var alias)) name = alias;
@@ -145,7 +147,7 @@ namespace ClickHouse.Ado.Impl.ColumnTypes {
         public abstract void ValueFromConst(Parser.ValueType val);
         public abstract string AsClickHouseType(ClickHouseTypeUsageIntent usageIntent);
         public abstract void Write(ProtocolFormatter formatter, int rows);
-
+        public abstract Task WriteAsync(ProtocolFormatter formatter, int rows);
         public abstract void ValueFromParam(ClickHouseParameter parameter);
         public abstract object Value(int currentRow);
         public abstract long IntValue(int currentRow);

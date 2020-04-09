@@ -7,12 +7,15 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using ClickHouse.Ado.Impl.Compress;
 using ClickHouse.Ado.Impl.Data;
 using ClickHouse.Ado.Impl.Settings;
 
-namespace ClickHouse.Ado.Impl {
-    internal class ProtocolFormatter {
+namespace ClickHouse.Ado.Impl
+{
+    internal class ProtocolFormatter
+    {
         private static readonly Regex NameRegex = new Regex("^[a-zA-Z_][0-9a-zA-Z_]*$", RegexOptions.Compiled);
 
         /// <summary>
@@ -37,7 +40,8 @@ namespace ClickHouse.Ado.Impl {
         /// </summary>
         private Stream _ioStream;
 
-        internal ProtocolFormatter(Stream baseStream, ClientInfo clientInfo, Func<bool> poll, int socketTimeout) {
+        internal ProtocolFormatter(Stream baseStream, ClientInfo clientInfo, Func<bool> poll, int socketTimeout)
+        {
             _baseStream = baseStream;
             _poll = poll;
             _socketTimeout = socketTimeout;
@@ -50,46 +54,58 @@ namespace ClickHouse.Ado.Impl {
         public ServerInfo ServerInfo { get; set; }
         public ClientInfo ClientInfo { get; }
 
-        public void Handshake(ClickHouseConnectionSettings connectionSettings) {
+        public void Handshake(ClickHouseConnectionSettings connectionSettings)
+        {
+            HandshakeAsync(connectionSettings).Wait();
+        }
+
+        public async Task HandshakeAsync(ClickHouseConnectionSettings connectionSettings)
+        {
             _connectionSettings = connectionSettings;
             _compressor = connectionSettings.Compress ? Compressor.Create(connectionSettings) : null;
-            WriteUInt((int) ClientMessageType.Hello);
+            await WriteUIntAsync((int)ClientMessageType.Hello).ConfigureAwait(false);
 
-            WriteString(ClientInfo.ClientName);
-            WriteUInt(ClientInfo.ClientVersionMajor);
-            WriteUInt(ClientInfo.ClientVersionMinor);
-            WriteUInt(ClientInfo.ClientRevision);
-            WriteString(connectionSettings.Database);
-            WriteString(connectionSettings.User);
-            WriteString(connectionSettings.Password);
-            _ioStream.Flush();
+            await WriteStringAsync(ClientInfo.ClientName).ConfigureAwait(false);
+            await WriteUIntAsync(ClientInfo.ClientVersionMajor).ConfigureAwait(false);
+            await WriteUIntAsync(ClientInfo.ClientVersionMinor).ConfigureAwait(false);
+            await WriteUIntAsync(ClientInfo.ClientRevision).ConfigureAwait(false);
+            await WriteStringAsync(connectionSettings.Database).ConfigureAwait(false);
+            await WriteStringAsync(connectionSettings.User).ConfigureAwait(false);
+            await WriteStringAsync(connectionSettings.Password).ConfigureAwait(false);
+            await _ioStream.FlushAsync().ConfigureAwait(false);
 
-            var serverHello = ReadUInt();
-            if (serverHello == (int) ServerMessageType.Hello) {
-                var serverName = ReadString();
-                var serverMajor = ReadUInt();
-                var serverMinor = ReadUInt();
-                var serverBuild = ReadUInt();
+            var serverHello = await ReadUIntAsync().ConfigureAwait(false);
+            if (serverHello == (int)ServerMessageType.Hello)
+            {
+                var serverName = await ReadStringAsync().ConfigureAwait(false);
+                var serverMajor = await ReadUIntAsync().ConfigureAwait(false);
+                var serverMinor = await ReadUIntAsync().ConfigureAwait(false);
+                var serverBuild = await ReadUIntAsync().ConfigureAwait(false);
                 string serverTz = null, serverDn = null;
                 ulong serverPatch = 0;
                 if (serverBuild >= ProtocolCaps.DbmsMinRevisionWithServerTimezone)
-                    serverTz = ReadString();
+                    serverTz = await ReadStringAsync().ConfigureAwait(false);
                 if (serverBuild >= ProtocolCaps.DbmsMinRevisionWithServerDisplayName)
-                    serverDn = ReadString();
+                    serverDn = await ReadStringAsync().ConfigureAwait(false);
                 if (serverBuild >= ProtocolCaps.DbmsMinRevisionWithServerVersionPatch)
-                    serverPatch = (uint) ReadUInt();
-                ServerInfo = new ServerInfo {
+                    serverPatch = (uint)(await ReadUIntAsync().ConfigureAwait(false));
+                ServerInfo = new ServerInfo
+                {
                     Build = serverBuild,
                     Major = serverMajor,
                     Minor = serverMinor,
                     Name = serverName,
                     Timezone = serverTz,
-                    Patch = (long) serverPatch,
+                    Patch = (long)serverPatch,
                     DisplayName = serverDn
                 };
-            } else if (serverHello == (int) ServerMessageType.Exception) {
-                ReadAndThrowException();
-            } else {
+            }
+            else if (serverHello == (int)ServerMessageType.Exception)
+            {
+                await ReadAndThrowExceptionAsync().ConfigureAwait(false);
+            }
+            else
+            {
                 throw new FormatException($"Bad message type {serverHello:X} received from server.");
             }
         }
@@ -99,115 +115,173 @@ namespace ClickHouse.Ado.Impl {
                                QuerySettings settings,
                                ClientInfo clientInfo,
                                IEnumerable<Block> xtables,
-                               bool noData) {
-            WriteUInt((int) ClientMessageType.Query);
-            WriteString("");
-            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithClientInfo) {
+                               bool noData)
+        {
+            RunQueryAsync(sql, stage, settings, clientInfo, xtables, noData).Wait();
+        }
+
+        internal async Task RunQueryAsync(string sql,
+            QueryProcessingStage stage,
+            QuerySettings settings,
+            ClientInfo clientInfo,
+            IEnumerable<Block> xtables,
+            bool noData)
+        {
+            await WriteUIntAsync((int)ClientMessageType.Query).ConfigureAwait(false);
+            await WriteStringAsync("").ConfigureAwait(false);
+            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithClientInfo)
+            {
                 if (clientInfo == null)
                     clientInfo = ClientInfo;
                 else
                     clientInfo.QueryKind = QueryKind.Secondary;
 
-                clientInfo.Write(this);
+                await clientInfo.WriteAsync(this).ConfigureAwait(false);
             }
 
             var compressionMethod = _compressor != null ? _compressor.Method : CompressionMethod.Lz4;
-            if (settings != null) {
-                settings.Write(this);
+            if (settings != null)
+            {
+                await settings.WriteAsync(this).ConfigureAwait(false);
                 compressionMethod = settings.Get<CompressionMethod>("compression_method");
-            } else {
-                WriteString("");
+            }
+            else
+            {
+                await WriteStringAsync("").ConfigureAwait(false);
             }
 
-            WriteUInt((int) stage);
-            WriteUInt(_connectionSettings.Compress ? (int) compressionMethod : 0);
-            WriteString(sql);
-            _baseStream.Flush();
+            await WriteUIntAsync((int)stage).ConfigureAwait(false);
+            await WriteUIntAsync(_connectionSettings.Compress ? (int)compressionMethod : 0).ConfigureAwait(false);
+            await WriteStringAsync(sql).ConfigureAwait(false);
+            await _baseStream.FlushAsync().ConfigureAwait(false);
 
-            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTemporaryTables && noData) {
-                new Block().Write(this);
-                _baseStream.Flush();
+            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTemporaryTables && noData)
+            {
+                await new Block().WriteAsync(this).ConfigureAwait(false);
+                await _baseStream.FlushAsync().ConfigureAwait(false);
             }
 
-            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTemporaryTables) SendBlocks(xtables);
+            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTemporaryTables)
+            {
+                await SendBlocksAsync(xtables).ConfigureAwait(false);
+            }
         }
 
-        internal Block ReadSchema() {
+        internal Block ReadSchema()
+        {
+            return ReadSchemaAsync().Result;
+        }
+
+        internal async Task<Block> ReadSchemaAsync()
+        {
             var schema = new Response();
-            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithColumnDefaultsMetadata) {
-                ReadPacket(schema);
+            if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithColumnDefaultsMetadata)
+            {
+                await ReadPacketAsync(schema).ConfigureAwait(false);
                 if (schema.Type == ServerMessageType.TableColumns)
-                    ReadPacket(schema);
-            } else {
-                ReadPacket(schema);
+                    await ReadPacketAsync(schema).ConfigureAwait(false);
+            }
+            else
+            {
+                await ReadPacketAsync(schema).ConfigureAwait(false);
             }
 
             return schema.Blocks.First();
         }
 
-        internal void SendBlocks(IEnumerable<Block> blocks) {
-            if (blocks != null)
-                foreach (var block in blocks) {
-                    block.Write(this);
-                    _baseStream.Flush();
-                }
-
-            new Block().Write(this);
-            _baseStream.Flush();
+        internal void SendBlocks(IEnumerable<Block> blocks)
+        {
+            SendBlocksAsync(blocks).Wait();
         }
 
-        internal Response ReadResponse() {
+        internal async Task SendBlocksAsync(IEnumerable<Block> blocks)
+        {
+            if (blocks != null)
+                foreach (var block in blocks)
+                {
+                    await block.WriteAsync(this).ConfigureAwait(false);
+                    await _baseStream.FlushAsync().ConfigureAwait(false);
+                }
+
+            await new Block().WriteAsync(this).ConfigureAwait(false);
+            await _baseStream.FlushAsync().ConfigureAwait(false);
+        }
+
+        internal Response ReadResponse()
+        {
+            return ReadResponseAsync().Result;
+        }
+
+        internal async Task<Response> ReadResponseAsync()
+        {
             var rv = new Response();
-            while (true) {
+            while (true)
+            {
                 if (!_poll()) continue;
-                if (!ReadPacket(rv)) break;
+                if (!await ReadPacketAsync(rv).ConfigureAwait(false)) break;
             }
 
             return rv;
         }
 
-        internal Block ReadBlock() {
+        internal Block ReadBlock()
+        {
+            return ReadBlockAsync().Result;
+        }
+
+        internal async Task<Block> ReadBlockAsync()
+        {
             var rv = new Response();
-            while (ReadPacket(rv))
+            while (await ReadPacketAsync(rv).ConfigureAwait(false))
                 if (rv.Blocks.Any())
                     return rv.Blocks.First();
             return null;
         }
 
-        internal bool ReadPacket(Response rv) {
-            var type = (ServerMessageType) ReadUInt();
+        internal bool ReadPacket(Response rv)
+        {
+            return ReadPacketAsync(rv).Result;
+        }
+
+        internal async Task<bool> ReadPacketAsync(Response rv)
+        {
+            var type = (ServerMessageType)await ReadUIntAsync().ConfigureAwait(false);
             rv.Type = type;
-            switch (type) {
+            switch (type)
+            {
                 case ServerMessageType.Data:
                 case ServerMessageType.Totals:
                 case ServerMessageType.Extremes:
-                    rv.AddBlock(Block.Read(this));
+                    rv.AddBlock(await Block.ReadAsync(this).ConfigureAwait(false));
                     return true;
                 case ServerMessageType.Exception:
-                    ReadAndThrowException();
+                    await ReadAndThrowExceptionAsync().ConfigureAwait(false);
                     return false;
-                case ServerMessageType.Progress: {
-                    var rows = ReadUInt();
-                    var bytes = ReadUInt();
-                    long total = 0;
-                    if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTotalRowsInProgress)
-                        total = ReadUInt();
-                    rv.OnProgress(rows, total, bytes);
-                    return true;
-                }
-                case ServerMessageType.ProfileInfo: {
-                    var rows = ReadUInt();
-                    var blocks = ReadUInt();
-                    var bytes = ReadUInt();
-                    var appliedLimit = ReadUInt(); //bool
-                    var rowsNoLimit = ReadUInt();
-                    var calcRowsNoLimit = ReadUInt(); //bool
-                    return true;
-                }
-                case ServerMessageType.TableColumns: {
-                    var empty = ReadString();
-                    var columns = ReadString();
-                }
+                case ServerMessageType.Progress:
+                    {
+                        var rows = await ReadUIntAsync().ConfigureAwait(false);
+                        var bytes = await ReadUIntAsync().ConfigureAwait(false);
+                        long total = 0;
+                        if (ServerInfo.Build >= ProtocolCaps.DbmsMinRevisionWithTotalRowsInProgress)
+                            total = await ReadUIntAsync().ConfigureAwait(false);
+                        rv.OnProgress(rows, total, bytes);
+                        return true;
+                    }
+                case ServerMessageType.ProfileInfo:
+                    {
+                        var rows = await ReadUIntAsync().ConfigureAwait(false);
+                        var blocks = await ReadUIntAsync().ConfigureAwait(false);
+                        var bytes = await ReadUIntAsync().ConfigureAwait(false);
+                        var appliedLimit = await ReadUIntAsync().ConfigureAwait(false); //bool
+                        var rowsNoLimit = await ReadUIntAsync().ConfigureAwait(false);
+                        var calcRowsNoLimit = await ReadUIntAsync().ConfigureAwait(false); //bool
+                        return true;
+                    }
+                case ServerMessageType.TableColumns:
+                    {
+                        var empty = await ReadStringAsync().ConfigureAwait(false);
+                        var columns = await ReadStringAsync().ConfigureAwait(false);
+                    }
                     return true;
                 case ServerMessageType.Pong:
                     return true;
@@ -219,19 +293,22 @@ namespace ClickHouse.Ado.Impl {
             }
         }
 
-        public static string EscapeName(string str) {
+        public static string EscapeName(string str)
+        {
             if (!NameRegex.IsMatch(str)) throw new ArgumentException($"'{str}' is invalid identifier.");
             return str;
         }
 
         public static string EscapeStringValue(string str) => "\'" + str.Replace("\\", "\\\\").Replace("\'", "\\\'") + "\'";
 
-        public void Close() {
+        public void Close()
+        {
             if (_compStream != null)
                 _compStream.Dispose();
         }
 
-        public static string UnescapeStringValue(string src) {
+        public static string UnescapeStringValue(string src)
+        {
             if (src == null) return string.Empty;
             if (src.StartsWith("'") && src.EndsWith("'")) return src.Substring(1, src.Length - 2).Replace("\\'", "'").Replace("\\\\", "\\");
             return src;
@@ -239,21 +316,46 @@ namespace ClickHouse.Ado.Impl {
 
         #region Structures IO
 
-        private void ReadAndThrowException() => throw ReadException();
+        private void ReadAndThrowException()
+        {
+            try
+            {
+                ReadAndThrowExceptionAsync().Wait();
+            }
+            catch (AggregateException ex)
+            {
+                var exception = ex.InnerExceptions.First();
+                throw exception;
+            }
+        }
 
-        private Exception ReadException() {
-            var code = BitConverter.ToInt32(ReadBytes(4), 0); // reader.ReadInt32();
-            var name = ReadString();
-            var message = ReadString();
-            var stackTrace = ReadString();
-            var nested = ReadBytes(1).Any(x => x != 0);
+        private async Task ReadAndThrowExceptionAsync()
+        {
+            var exception = await ReadExceptionAsync().ConfigureAwait(false);
+            throw exception;
+        }
+
+        private Exception ReadException()
+        {
+            return ReadExceptionAsync().Result;
+        }
+
+        private async Task<Exception> ReadExceptionAsync()
+        {
+            var code = BitConverter.ToInt32(await ReadBytesAsync(4).ConfigureAwait(false), 0); // reader.ReadInt32Async();
+            var name = await ReadStringAsync().ConfigureAwait(false);
+            var message = await ReadStringAsync().ConfigureAwait(false);
+            var stackTrace = await ReadStringAsync().ConfigureAwait(false);
+            var nested = (await ReadBytesAsync(1).ConfigureAwait(false)).Any(x => x != 0);
             if (nested)
-                return new ClickHouseException(message, ReadException()) {
+                return new ClickHouseException(message, await ReadExceptionAsync().ConfigureAwait(false))
+                {
                     Code = code,
                     Name = name,
                     ServerStackTrace = stackTrace
                 };
-            return new ClickHouseException(message) {
+            return new ClickHouseException(message)
+            {
                 Code = code,
                 Name = name,
                 ServerStackTrace = stackTrace
@@ -264,24 +366,40 @@ namespace ClickHouse.Ado.Impl {
 
         #region Low-level IO
 
-        internal void WriteByte(byte b) => _ioStream.Write(new[] {b}, 0, 1);
+        internal void WriteByte(byte b) => WriteByteAsync(b).Wait();
 
-        internal void WriteUInt(long s) {
-            var x = (ulong) s;
-            for (var i = 0; i < 9; i++) {
-                var b = (byte) ((byte) x & 0x7f);
+        internal async Task WriteByteAsync(byte b) => await _ioStream.WriteAsync(new[] { b }, 0, 1).ConfigureAwait(false);
+
+        internal void WriteUInt(long s)
+        {
+            WriteUIntAsync(s).Wait();
+        }
+
+        internal async Task WriteUIntAsync(long s)
+        {
+            var x = (ulong)s;
+            for (var i = 0; i < 9; i++)
+            {
+                var b = (byte)((byte)x & 0x7f);
                 if (x > 0x7f)
                     b |= 0x80;
-                WriteByte(b);
+                await WriteByteAsync(b).ConfigureAwait(false);
                 x >>= 7;
                 if (x == 0) return;
             }
         }
 
-        internal long ReadUInt() {
+        internal long ReadUInt()
+        {
+            return ReadUIntAsync().Result;
+        }
+
+        internal async Task<long> ReadUIntAsync()
+        {
             var x = 0;
-            for (var i = 0; i < 9; ++i) {
-                var b = ReadByte();
+            for (var i = 0; i < 9; ++i)
+            {
+                var b = await ReadByteAsync().ConfigureAwait(false);
                 x |= (b & 0x7F) << (7 * i);
 
                 if ((b & 0x80) == 0) return x;
@@ -290,33 +408,53 @@ namespace ClickHouse.Ado.Impl {
             return x;
         }
 
-        internal void WriteString(string s) {
-            if (s == null) s = "";
-            var bytes = Encoding.UTF8.GetBytes(s);
-            WriteUInt((uint) bytes.Length);
-            WriteBytes(bytes);
+        internal void WriteString(string s)
+        {
+            WriteStringAsync(s).Wait();
         }
 
-        internal string ReadString() {
-            var len = ReadUInt();
+        internal async Task WriteStringAsync(string s)
+        {
+            if (s == null) s = "";
+            var bytes = Encoding.UTF8.GetBytes(s);
+            await WriteUIntAsync((uint)bytes.Length).ConfigureAwait(false);
+            await WriteBytesAsync(bytes).ConfigureAwait(false);
+        }
+
+        internal string ReadString()
+        {
+            return ReadStringAsync().Result;
+        }
+
+        internal async Task<string> ReadStringAsync()
+        {
+            var len = await ReadUIntAsync().ConfigureAwait(false);
             if (len > int.MaxValue)
                 throw new ArgumentException("Server sent too long string.");
-            var rv = len == 0 ? string.Empty : Encoding.UTF8.GetString(ReadBytes((int) len));
+            var rv = len == 0 ? string.Empty : Encoding.UTF8.GetString(await ReadBytesAsync((int)len).ConfigureAwait(false));
             return rv;
         }
 
-        public byte[] ReadBytes(int i) {
+        public byte[] ReadBytes(int i)
+        {
+            return ReadBytesAsync(i).Result;
+        }
+
+        public async Task<byte[]> ReadBytesAsync(int i)
+        {
             var bytes = new byte[i];
             var read = 0;
             var cur = 0;
             var networkStream = _ioStream as NetworkStream ?? (_ioStream as UnclosableStream)?.BaseStream as NetworkStream;
             long waitTimeStamp = 0;
 
-            do {
-                cur = _ioStream.Read(bytes, read, i - read);
+            do
+            {
+                cur = await _ioStream.ReadAsync(bytes, read, i - read).ConfigureAwait(false);
                 read += cur;
 
-                if (cur == 0) {
+                if (cur == 0)
+                {
                     // when we read from non-NetworkStream there's no point in waiting for more data
                     if (networkStream == null)
                         throw new EndOfStreamException();
@@ -331,8 +469,10 @@ namespace ClickHouse.Ado.Impl {
                     if (DateTimeOffset.Now.ToUnixTimeMilliseconds() - _socketTimeout > waitTimeStamp)
                         throw new TimeoutException("Socket timeout while waiting for data");
 
-                    Thread.Sleep(1);
-                } else {
+                    await Task.Delay(1).ConfigureAwait(false);
+                }
+                else
+                {
                     waitTimeStamp = 0;
                 }
             } while (read < i);
@@ -340,67 +480,117 @@ namespace ClickHouse.Ado.Impl {
             return bytes;
         }
 
-        public byte ReadByte() => ReadBytes(1)[0];
+        public byte ReadByte() => ReadBytesAsync(1).Result[0];
 
-        public void WriteBytes(byte[] bytes) => _ioStream.Write(bytes, 0, bytes.Length);
+        public async Task<byte> ReadByteAsync()
+        {
+            var bytes = await ReadBytesAsync(1).ConfigureAwait(false);
+            return bytes[0];
+        }
 
-        public void WriteBytes(byte[] bytes, int offset, int len) => _ioStream.Write(bytes, offset, len);
+        public void WriteBytes(byte[] bytes) => WriteBytesAsync(bytes).Wait();
+
+        public async Task WriteBytesAsync(byte[] bytes) => await _ioStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
+
+        public void WriteBytes(byte[] bytes, int offset, int len) => WriteBytesAsync(bytes, offset, len).Wait();
+
+        public async Task WriteBytesAsync(byte[] bytes, int offset, int len) => await _ioStream.WriteAsync(bytes, offset, len).ConfigureAwait(false);
 
         #endregion
 
         #region Compression
 
-        internal class CompressionHelper : IDisposable {
+        internal class CompressionHelper
+        {
             private readonly ProtocolFormatter _formatter;
 
-            public CompressionHelper(ProtocolFormatter formatter) {
+            public CompressionHelper(ProtocolFormatter formatter)
+            {
                 _formatter = formatter;
-                formatter.StartCompression();
             }
 
-            public void Dispose() => _formatter.EndCompression();
+            public async Task Run(Func<Task> block)
+            {
+                await _formatter.StartCompressionAsync().ConfigureAwait(false);
+                await block().ConfigureAwait(false);
+                await _formatter.EndDecompressionAsync().ConfigureAwait(false);
+            }
         }
 
-        internal class DecompressionHelper : IDisposable {
+        internal class DecompressionHelper
+        {
             private readonly ProtocolFormatter _formatter;
 
-            public DecompressionHelper(ProtocolFormatter formatter) {
+            public DecompressionHelper(ProtocolFormatter formatter)
+            {
                 _formatter = formatter;
-                formatter.StartDecompression();
             }
 
-            public void Dispose() => _formatter.EndDecompression();
+            public async Task Run(Func<Task> block)
+            {
+                await _formatter.StartDecompressionAsync().ConfigureAwait(false);
+                await block().ConfigureAwait(false);
+                await _formatter.EndDecompressionAsync().ConfigureAwait(false);
+            }
         }
 
-        private void StartCompression() {
-            if (_connectionSettings.Compress) {
+        private void StartCompression()
+        {
+            StartCompressionAsync().Wait();
+        }
+
+        internal async Task StartCompressionAsync()
+        {
+            if (_connectionSettings.Compress)
+            {
                 Debug.Assert(_compStream == null, "Already doing compression/decompression!");
                 _compStream = _compressor.BeginCompression(_baseStream);
                 _ioStream = _compStream;
             }
         }
 
-        private void EndCompression() {
-            if (_connectionSettings.Compress) {
+        private void EndCompression()
+        {
+            EndCompressionAsync().Wait();
+        }
+
+        private async Task EndCompressionAsync()
+        {
+            if (_connectionSettings.Compress)
+            {
                 Debug.Assert(_compStream != null, "Compression has not been started!");
-                _compressor.EndCompression();
+                await _compressor.EndCompressionAsync().ConfigureAwait(false);
                 _compStream = null;
                 _ioStream = _baseStream;
             }
         }
 
-        private void StartDecompression() {
-            if (_connectionSettings.Compress) {
+        private void StartDecompression()
+        {
+            StartDecompressionAsync().Wait();
+        }
+
+        private async Task StartDecompressionAsync()
+        {
+            if (_connectionSettings.Compress)
+            {
                 Debug.Assert(_compStream == null, "Already doing compression/decompression!");
-                _compStream = _compressor.BeginDecompression(_baseStream);
+                _compStream = await _compressor.BeginDecompressionAsync(_baseStream).ConfigureAwait(false);
                 _ioStream = _compStream;
             }
         }
 
-        private void EndDecompression() {
-            if (_connectionSettings.Compress) {
+        private void EndDecompression()
+        {
+            EndDecompressionAsync().Wait();
+        }
+
+        private async Task EndDecompressionAsync()
+        {
+            if (_connectionSettings.Compress)
+            {
                 Debug.Assert(_compStream != null, "Compression has not been started!");
-                _compressor.EndDecompression();
+                await _compressor.EndDecompressionAsync();
                 _compStream = null;
                 _ioStream = _baseStream;
             }
